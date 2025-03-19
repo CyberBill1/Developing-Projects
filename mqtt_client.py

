@@ -1,0 +1,73 @@
+import paho.mqtt.client as mqtt
+import Adafruit_DHT
+import time
+import json
+import boto3
+from datetime import datetime
+
+# AWS IoT Core setup
+AWS_IOT_ENDPOINT = "your-iot-endpoint.iot.region.amazonaws.com"
+CERT_PATH = "path/to/your-certificate.pem.crt"
+KEY_PATH = "path/to/your-private.pem.key"
+CA_PATH = "path/to/AmazonRootCA1.pem"
+TOPIC = "iot/security_gateway/data"
+
+# CloudWatch setup
+cloudwatch = boto3.client('logs', region_name='your-region')
+LOG_GROUP = 'IoTSecurityGateway'
+LOG_STREAM = 'GatewayLogs'
+
+# DHT11 setup
+SENSOR = Adafruit_DHT.DHT11
+PIN = 4
+
+# MQTT callbacks
+def on_connect(client, userdata, flags, rc):
+    print("Connected to AWS IoT with result code: " + str(rc))
+
+def on_publish(client, userdata, mid):
+    print("Message published")
+
+# Initialize MQTT client
+client = mqtt.Client(client_id="SecurityGateway")
+client.tls_set(CA_PATH, CERT_PATH, KEY_PATH)
+client.on_connect = on_connect
+client.on_publish = on_publish
+client.connect(AWS_IOT_ENDPOINT, 8883, 60)
+
+# Log to CloudWatch
+def log_to_cloudwatch(message):
+    cloudwatch.put_log_events(
+        logGroupName=LOG_GROUP,
+        logStreamName=LOG_STREAM,
+        logEvents=[{
+            'timestamp': int(datetime.now().timestamp() * 1000),
+            'message': message
+        }]
+    )
+
+client.loop_start()
+
+# Main loop
+while True:
+    humidity, temperature = Adafruit_DHT.read_retry(SENSOR, PIN)
+    if humidity is not None and temperature is not None:
+        payload = {
+            "timestamp": str(datetime.now()),
+            "temperature": temperature,
+            "humidity": humidity
+        }
+        client.publish(TOPIC, json.dumps(payload), qos=1)
+        print(f"Published: {payload}")
+    else:
+        log_to_cloudwatch("Sensor read error")
+        print("Failed to read sensor")
+    
+    # Check for security events (e.g., from Snort logs)
+    with open("/var/log/snort/alert", "r") as f:
+        alerts = f.read()
+        if alerts:
+            log_to_cloudwatch(f"Security alert: {alerts}")
+            print("Security event detected")
+
+    time.sleep(60)  # Publish every minute
