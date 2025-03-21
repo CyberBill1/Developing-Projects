@@ -1,0 +1,5 @@
+# Detect ping flood
+alert icmp any any -> $HOME_NET any (msg:"Possible Ping Flood"; flags:S; threshold: type threshold, track by_src, count 100, seconds 10; sid:1000001;)
+
+# Detect unauthorized MQTT access
+alert tcp any any -> $HOME_NET 1883 (msg:"Unauthorized MQTT Attempt"; flags:S; sid:1000002;)
